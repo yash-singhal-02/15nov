@@ -1,6 +1,11 @@
 "use strict";
 
-const API_BASE = (window.CAMPUSCONNECT_API_BASE || "").replace(/\/+$/, "");
+import { createClient } from "@supabase/supabase-js";
+
+const API_BASE = (window.CAMPUSCONNECT_API_BASE || import.meta.env.VITE_API_BASE || "").replace(/\/+$/, "");
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
+const SUPABASE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+const supabase = SUPABASE_URL && SUPABASE_KEY ? createClient(SUPABASE_URL, SUPABASE_KEY) : null;
 const previewEvents = [
   {
     id: "preview-hackathon",
@@ -72,6 +77,7 @@ const state = {
   eventsArePreview: true,
   registrationsArePreview: true,
   currentUser: { name: "Demo user", email: "" },
+  selectedUserId: "",
   userIsPreview: true,
   users: [],
   usersArePreview: true,
@@ -82,6 +88,8 @@ const app = document.querySelector("#app");
 const apiNotice = document.querySelector("#api-notice");
 const dialog = document.querySelector("#event-dialog");
 const dialogContent = document.querySelector("#dialog-content");
+const userSwitchDialog = document.querySelector("#user-switch-dialog");
+const userSwitchList = document.querySelector("#user-switch-list");
 const toast = document.querySelector("#toast");
 let toastTimer;
 
@@ -155,6 +163,10 @@ function currentUserName() {
   return state.currentUser.name || state.currentUser.full_name || state.currentUser.username || state.currentUser.email || "Configured user";
 }
 
+function roleForUser(user) {
+  return ["organizer", "organiser", "admin"].includes(String(user?.role || "").toLowerCase()) ? "organizer" : "student";
+}
+
 function initials(value) {
   return String(value || "U").split(/[\s@._-]+/).filter(Boolean).slice(0, 2).map((part) => part[0].toUpperCase()).join("");
 }
@@ -209,7 +221,7 @@ function refreshNotice() {
     messages.push(`Event API unavailable; showing preview events. ${state.eventsLoadError || ""}`.trim());
   }
   if (state.userIsPreview) {
-    messages.push(`User profile unavailable; showing a placeholder. ${state.userLoadError || ""}`.trim());
+    messages.push(`No public user profiles could be loaded. ${state.usersLoadError || ""}`.trim());
   }
   if (state.view === "tickets" && state.registrationsArePreview) {
     messages.push(`Registration API unavailable; showing sample tickets. ${state.registrationsLoadError || ""}`.trim());
@@ -355,13 +367,15 @@ function renderManage() {
   const totalSeats = state.events.reduce((sum, event) => sum + event.capacity, 0);
   const claimed = state.events.reduce((sum, event) => sum + event.registered, 0);
   const fullCount = state.events.filter(isClosed).length;
-  const organizerEvents = state.role === "organizer" ? state.events : [];
+  const organizerEvents = state.role === "organizer"
+    ? state.events.filter((event) => String(event.organizer_id) === String(state.currentUser.id))
+    : [];
   return `
     <section class="section-heading">
       <div><h1>Organizer console</h1><p>Live seat telemetry and event controls for your campus community.</p></div>
       <span class="status-label"><span class="status-dot"></span>${state.eventsArePreview ? "Preview data" : `Live · ${state.lastSyncedAt ? new Date(state.lastSyncedAt).toLocaleTimeString() : "syncing"}`}</span>
     </section>
-    <p class="manage-header-note">Configured user: ${escapeHtml(currentUserName())} (${escapeHtml(state.currentUser.email || "email unavailable")}) <button type="button" class="button button-soft" data-action="switch-role">Switch dashboard view ⇄</button></p>
+    <p class="manage-header-note">Viewing as ${escapeHtml(currentUserName())} (${escapeHtml(state.currentUser.email || "email unavailable")}) <button type="button" class="button button-soft" data-action="switch-user">Switch user ⇄</button></p>
     <section class="manage-summary" aria-label="Organizer metrics">
       <div class="manage-metric"><span>Total events</span><strong>${organizerEvents.length}</strong><small>Created &amp; managed</small></div>
       <div class="manage-metric"><span>Registrations</span><strong>${claimed.toLocaleString()}</strong><small>Students enrolled</small></div>
@@ -393,17 +407,6 @@ function renderManage() {
         </form>
         <div class="contract-note">Event creation is not supported by the current API contract. Add a <code>POST /api/events</code> endpoint to enable this form.</div>
       </aside>
-    </section>
-    <section class="panel user-directory-panel">
-      <div class="panel-heading"><h2>Supabase users</h2><span>${state.usersArePreview ? "Unavailable" : `${state.users.length} listed`}</span></div>
-      ${state.usersArePreview ? `<p class="directory-note">Could not load users. ${escapeHtml(state.usersLoadError || "")}</p>` : state.users.length ? `<div class="user-directory-list">${state.users.map((user) => {
-        const email = user.email || "";
-        const isConfiguredUser = user.id === state.currentUser.id || email === state.currentUser.email;
-        const role = user.role || "student";
-        const roles = ["student", "organiser", "organizer", "admin"];
-        if (!roles.includes(role)) roles.push(role);
-        return `<article class="user-editor"><div class="user-editor-heading"><span class="person-avatar">${escapeHtml(initials(email))}</span><span><strong>${escapeHtml(email || "Email unavailable")}</strong><small>${escapeHtml(isConfiguredUser ? "Configured demo account" : "Supabase user")}</small></span></div><form class="user-edit-form" data-user-id="${escapeHtml(user.id)}"><label>Email<input name="email" type="email" value="${escapeHtml(email)}" required ${isConfiguredUser ? "readonly" : ""}></label><label>Role<select name="role">${roles.map((option) => `<option value="${escapeHtml(option)}" ${option === role ? "selected" : ""}>${escapeHtml(option)}</option>`).join("")}</select></label><button class="button button-primary" type="submit">Save</button></form>${isConfiguredUser ? `<small class="directory-note">Change this account email in backend/.env.</small>` : ""}</article>`;
-      }).join("")}</div>` : `<p class="directory-note">No rows found in the Supabase users table.</p>`}
     </section>`;
 }
 
@@ -416,6 +419,41 @@ function render() {
   });
   document.querySelector("#role-label").textContent = `${currentUserName()} · ${state.role === "student" ? "Student view" : "Organizer view"}`;
   document.querySelector("#profile-button").textContent = initials(currentUserName());
+}
+
+function openUserSwitcher() {
+  if (!state.users.length) {
+    showToast("No public user profiles are available to switch to.");
+    return;
+  }
+  userSwitchList.innerHTML = state.users.map((user) => {
+    const selected = String(user.id) === String(state.currentUser.id);
+    const label = user.name || user.full_name || user.username || user.email || "Campus user";
+    return `<button type="button" class="user-switch-option ${selected ? "selected" : ""}" data-user-id="${escapeHtml(user.id)}">
+      <span class="person-avatar">${escapeHtml(initials(user.email || label))}</span>
+      <span><strong>${escapeHtml(user.email || label)}</strong><small>${escapeHtml(user.role || "student")}</small></span>
+      ${selected ? '<span class="user-switch-current">Current</span>' : '<span class="switch-icon">↗</span>'}
+    </button>`;
+  }).join("");
+  userSwitchDialog.showModal();
+}
+
+async function switchUser(userId) {
+  const user = state.users.find((row) => String(row.id) === String(userId));
+  if (!user) return;
+  state.currentUser = {
+    ...user,
+    name: user.name || user.full_name || user.username || user.email || "Campus user",
+  };
+  state.selectedUserId = String(user.id);
+  state.role = roleForUser(user);
+  if (state.view === "manage" && state.role !== "organizer") state.view = "explore";
+  localStorage.setItem("campusconnect-active-user", state.selectedUserId);
+  userSwitchDialog.close();
+  render();
+  await loadRegistrations();
+  render();
+  showToast(`Switched to ${user.email || state.currentUser.name}.`);
 }
 
 function showToast(message) {
@@ -462,45 +500,44 @@ async function loadEvents() {
   }
 }
 
-async function loadCurrentUser() {
-  try {
-    const payload = await request("/api/me");
-    const user = payload.user || {};
-    const nextUser = {
-      ...user,
-      name: user.name || user.full_name || user.username || user.email || "Configured user",
-    };
-    const changed = JSON.stringify(state.currentUser) !== JSON.stringify(nextUser) || state.userIsPreview;
-    state.currentUser = nextUser;
-    state.userIsPreview = false;
-    state.userLoadError = "";
-    if (changed) render();
-  } catch (error) {
-    state.userIsPreview = true;
-    state.userLoadError = error.message;
-    render();
-  }
-}
-
 async function loadUsers() {
   try {
     const payload = await request("/api/users");
     const users = collectionFrom(payload, ["users", "data"]);
+    const storedId = localStorage.getItem("campusconnect-active-user");
+    let selected = users.find((user) => String(user.id) === String(storedId));
+    if (!selected && !storedId) {
+      const configured = await request("/api/me").catch(() => null);
+      selected = users.find((user) => String(user.id) === String(configured?.user?.id));
+    }
+    selected ||= users.find((user) => String(user.id) === String(state.currentUser.id)) || users[0] || null;
+    const currentChanged = JSON.stringify(state.currentUser) !== JSON.stringify(selected || {});
     const changed = JSON.stringify(state.users) !== JSON.stringify(users) || state.usersArePreview;
     state.users = users;
     state.usersArePreview = false;
     state.usersLoadError = "";
-    if (changed && state.view === "manage") render();
+    state.userIsPreview = !selected;
+    if (selected) {
+      state.currentUser = {
+        ...selected,
+        name: selected.name || selected.full_name || selected.username || selected.email || "Campus user",
+      };
+      state.selectedUserId = String(selected.id);
+      state.role = roleForUser(selected);
+      localStorage.setItem("campusconnect-active-user", state.selectedUserId);
+    }
+    if (changed || currentChanged) render();
   } catch (error) {
     state.usersArePreview = true;
     state.usersLoadError = error.message;
-    if (state.view === "manage") render();
+    state.userIsPreview = true;
+    render();
   }
 }
 
 async function loadRegistrations() {
   try {
-    const payload = await request("/api/me/registrations");
+    const payload = await request(`/api/me/registrations?user_id=${encodeURIComponent(state.currentUser.id || "")}`);
     state.registrations = collectionFrom(payload, ["registrations", "data"]);
     state.registrationsArePreview = false;
     state.registrationsLoadError = "";
@@ -512,7 +549,7 @@ async function loadRegistrations() {
 }
 
 async function refreshCurrentView() {
-  await Promise.all([loadEvents(), loadCurrentUser(), loadUsers()]);
+  await Promise.all([loadEvents(), loadUsers()]);
   if (state.view === "tickets") {
     await loadRegistrations();
     return;
@@ -547,7 +584,7 @@ async function registerForEvent(id) {
     return;
   }
   try {
-    await request("/api/registrations", { method: "POST", body: JSON.stringify({ event_id: id }) });
+    await request("/api/registrations", { method: "POST", body: JSON.stringify({ event_id: id, user_id: state.currentUser.id }) });
     showToast("You're registered! Refreshing your tickets…");
     if (dialog.open) dialog.close();
     await Promise.all([loadEvents(), loadRegistrations()]);
@@ -573,7 +610,7 @@ async function cancelRegistration(registrationId) {
     return;
   }
   try {
-    await request(`/api/registrations/${encodeURIComponent(registrationId)}`, { method: "DELETE" });
+    await request(`/api/registrations/${encodeURIComponent(registrationId)}?user_id=${encodeURIComponent(state.currentUser.id)}`, { method: "DELETE" });
     showToast("Registration cancelled. You can register for this event again.");
     await Promise.all([loadEvents(), loadRegistrations()]);
   } catch (error) {
@@ -587,7 +624,7 @@ async function loadAttendees(id) {
   dialogContent.innerHTML = `<div class="dialog-content"><h2 id="dialog-title">Event registrations</h2><p>Loading attendee list…</p></div>`;
   dialog.showModal();
   try {
-    const payload = await request(`/api/events/${encodeURIComponent(id)}/registrations`);
+    const payload = await request(`/api/events/${encodeURIComponent(id)}/registrations?organizer_id=${encodeURIComponent(state.currentUser.id)}`);
     const registrations = collectionFrom(payload, ["registrations", "data"]);
     dialogContent.innerHTML = `<div class="dialog-content"><h2 id="dialog-title">${escapeHtml(event.title)} · Attendees</h2><p>${registrations.length} registration records</p><div class="attendee-list">${registrations.length ? registrations.map((registration) => `<div class="attendee-row"><span>${escapeHtml(registration.name ?? registration.user?.name ?? registration.email ?? registration.user?.email ?? "Registered attendee")}<small>${escapeHtml(registration.email ?? registration.user?.email ?? "Registration confirmed")}</small></span><span class="ticket-tag green">${escapeHtml(registration.status ?? "Registered")}</span></div>`).join("") : `<p>No registrations yet.</p>`}</div></div>`;
   } catch (error) {
@@ -634,9 +671,8 @@ document.addEventListener("click", async (event) => {
     case "refresh":
       await refreshCurrentView();
       break;
-    case "switch-role":
-      state.role = state.role === "student" ? "organizer" : "student";
-      render();
+    case "switch-user":
+      openUserSwitcher();
       break;
     case "closed":
       showToast("This event is no longer accepting registrations.");
@@ -659,41 +695,23 @@ document.addEventListener("input", (event) => {
 });
 
 document.addEventListener("submit", (event) => {
-  if (event.target.matches(".user-edit-form")) {
-    event.preventDefault();
-    saveUser(event.target);
-    return;
-  }
   if (event.target.id === "create-event-form") {
     event.preventDefault();
     showToast("Event creation is not available in the current backend API.");
   }
 });
 
-async function saveUser(form) {
-  const formData = new FormData(form);
-  const userId = form.dataset.userId;
-  try {
-    await request(`/api/users/${encodeURIComponent(userId)}`, {
-      method: "PATCH",
-      body: JSON.stringify({ email: formData.get("email"), role: formData.get("role") }),
-    });
-    showToast("User updated in Supabase.");
-    await Promise.all([loadUsers(), loadCurrentUser()]);
-  } catch (error) {
-    showToast(`Could not update user: ${error.message}`);
-  }
-}
-
 document.querySelector("#role-switch").addEventListener("click", () => {
-  state.role = state.role === "student" ? "organizer" : "student";
-  render();
+  openUserSwitcher();
 });
 
 document.querySelector("#profile-button").addEventListener("click", () => {
-  state.role = state.role === "student" ? "organizer" : "student";
-  render();
-  showToast(`Switched to ${state.role} preview.`);
+  openUserSwitcher();
+});
+
+userSwitchList.addEventListener("click", (event) => {
+  const option = event.target.closest("[data-user-id]");
+  if (option) switchUser(option.dataset.userId);
 });
 
 render();
@@ -701,3 +719,12 @@ refreshCurrentView();
 window.setInterval(() => {
   if (document.visibilityState === "visible") refreshCurrentView();
 }, 5000);
+
+if (supabase) {
+  const channel = supabase.channel("campusconnect-live-data")
+    .on("postgres_changes", { event: "*", schema: "public", table: "users" }, refreshCurrentView)
+    .on("postgres_changes", { event: "*", schema: "public", table: "events" }, refreshCurrentView)
+    .on("postgres_changes", { event: "*", schema: "public", table: "registration" }, refreshCurrentView)
+    .subscribe();
+  window.addEventListener("beforeunload", () => supabase.removeChannel(channel), { once: true });
+}

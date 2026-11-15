@@ -1,6 +1,6 @@
 # CampusConnect frontend
 
-This is the React frontend. The Flask API runs separately on Render.
+This is the frontend loaded by `index.html`; the Flask API runs separately on Render. Vite serves and builds the HTML, CSS, and JavaScript files.
 
 ## Run locally
 
@@ -22,4 +22,4 @@ Apply `backend/migrations/001_atomic_registration.sql` and `backend/migrations/0
 
 Registration uses the selected `public.users` row and the `register_for_event` database function. Event create, update, and delete use the API and persist to Supabase. This persona switch is a demo, not authentication; add Supabase Auth and user-scoped RLS policies before using it for a public production app.
 
-The current role switch is a demo UI, not sign-in. The app reads the public `users` profile table; Supabase Auth users in `auth.users` are private and will not appear automatically. The API's organizer checks use rows in `public.users`, not authenticated identity, so add Supabase Auth and user-scoped authorization before allowing public users to write data.
+Use the profile button in the top bar to switch between rows in `public.users` without signing in. The selection is saved in the browser. The role switch is a demo persona, not authentication. Supabase Auth users in `auth.users` are private and will not appear automatically. The API's organizer checks use rows in `public.users`, not authenticated identity, so add Supabase Auth and user-scoped authorization before allowing public users to write data.

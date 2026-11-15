@@ -1,18 +1,63 @@
 <!doctype html>
 <html lang="en">
   <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#0f172a" />
-    <meta name="description" content="CampusConnect campus event registration" />
-    <title>CampusConnect</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@600;700;800&display=swap" rel="stylesheet" />
-    <script type="module" crossorigin src="/assets/index-ChuSXljp.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-DxTtOzUQ.css">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#172033">
+    <meta name="description" content="Discover campus events and manage your registrations with CampusConnect.">
+    <title>CampusConnect | Campus events</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&family=Manrope:wght@500;600;700;800&display=swap" rel="stylesheet">
+    <script type="module" crossorigin src="/assets/index-DWkOjOci.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index--qH1cGP5.css">
   </head>
   <body>
-    <div id="root"></div>
+    <a class="skip-link" href="#main-content">Skip to content</a>
+    <header class="topbar">
+      <a class="brand" href="#" aria-label="CampusConnect home" data-view="explore">
+        <span class="brand-mark" aria-hidden="true">C</span>
+        <span class="brand-name">Campus<span>Connect</span></span>
+      </a>
+      <nav class="desktop-nav" aria-label="Main navigation">
+        <button class="nav-link active" data-view="explore">Explore</button>
+        <button class="nav-link" data-view="tickets">My tickets</button>
+        <button class="nav-link" data-view="manage">Organizer</button>
+      </nav>
+      <div class="topbar-actions">
+        <button class="role-switch" id="role-switch" type="button" aria-label="Switch active user">
+          <span class="live-dot"></span>
+          <span id="role-label">Loading user profile…</span>
+          <span class="switch-icon" aria-hidden="true">⇄</span>
+        </button>
+        <button class="avatar-button" id="profile-button" type="button" aria-label="Current profile">AT</button>
+      </div>
+    </header>
+
+    <main id="main-content" class="page-shell">
+      <div id="api-notice" class="api-notice" role="status" hidden></div>
+      <div id="app" aria-live="polite"></div>
+    </main>
+
+    <nav class="mobile-nav" aria-label="Main navigation">
+      <button class="mobile-nav-link active" data-view="explore"><span aria-hidden="true">⌕</span><span>Explore</span></button>
+      <button class="mobile-nav-link" data-view="tickets"><span aria-hidden="true">▣</span><span>Tickets</span></button>
+      <button class="mobile-nav-link" data-view="manage"><span aria-hidden="true">▦</span><span>Manage</span></button>
+    </nav>
+
+    <dialog id="event-dialog" class="event-dialog" aria-labelledby="dialog-title">
+      <form method="dialog" class="dialog-close-row">
+        <button class="icon-button" aria-label="Close event details">✕</button>
+      </form>
+      <div id="dialog-content"></div>
+    </dialog>
+    <dialog id="user-switch-dialog" class="user-switch-dialog" aria-labelledby="user-switch-title">
+      <header class="user-switch-header">
+        <div><h2 id="user-switch-title">Switch user</h2><p>Choose a profile to preview the app as.</p></div>
+        <form method="dialog"><button class="icon-button" aria-label="Close user switcher">×</button></form>
+      </header>
+      <div id="user-switch-list" class="user-switch-list"></div>
+    </dialog>
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
   </body>
 </html>
