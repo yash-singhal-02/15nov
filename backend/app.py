@@ -2,17 +2,32 @@ import os
 from pathlib import Path
 
 from dotenv import load_dotenv
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, jsonify, request
 from postgrest import APIError
 from supabase import Client, create_client
 
 
-ROOT = Path(__file__).resolve().parent.parent
-FRONTEND = ROOT / "frontend"
 load_dotenv(Path(__file__).with_name(".env"))
 
-app = Flask(__name__, static_folder=str(FRONTEND), static_url_path="")
+app = Flask(__name__, static_folder=None)
 _supabase = None
+
+
+@app.after_request
+def add_frontend_cors_headers(response):
+    """Allow the separately deployed frontend to call this API."""
+    allowed_origins = {
+        origin.strip().rstrip("/")
+        for origin in os.environ.get("CORS_ALLOWED_ORIGINS", "").split(",")
+        if origin.strip()
+    }
+    origin = request.headers.get("Origin", "").rstrip("/")
+    if origin in allowed_origins:
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, PATCH, DELETE, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
+        response.headers.add("Vary", "Origin")
+    return response
 
 
 def get_supabase() -> Client:
@@ -29,7 +44,7 @@ def get_supabase() -> Client:
 
 @app.get("/")
 def index():
-    return send_from_directory(FRONTEND, "index.html")
+    return jsonify({"success": True, "service": "CampusConnect API"})
 
 
 @app.get("/api/health")
