@@ -400,12 +400,11 @@ function renderManage() {
         <div class="panel-heading"><h2>Deploy new event</h2><span>Event form</span></div>
         <p>Publish a new campus event for students to discover and register.</p>
         <form id="create-event-form">
-          <div class="form-field"><label for="new-title">Event title</label><input id="new-title" type="text" placeholder="e.g. Quantum Computing Seminar" disabled></div>
-          <div class="form-field"><label for="new-capacity">Capacity</label><input id="new-capacity" type="number" placeholder="100" disabled></div>
-          <div class="form-field"><label for="new-status">Initial status</label><select id="new-status" disabled><option>Open</option><option>Closed</option></select></div>
-          <button class="button button-primary" type="submit" disabled>＋ &nbsp;Create event</button>
+          <div class="form-field"><label for="new-title">Event title</label><input id="new-title" name="title" type="text" maxlength="180" placeholder="e.g. Quantum Computing Seminar" required></div>
+          <div class="form-field"><label for="new-capacity">Capacity</label><input id="new-capacity" name="capacity" type="number" min="1" step="1" placeholder="100" required></div>
+          <div class="form-field"><label for="new-status">Initial status</label><select id="new-status" name="status"><option value="upcoming">Upcoming</option><option value="open">Open</option><option value="closed">Closed</option></select></div>
+          <button class="button button-primary" type="submit">＋ &nbsp;Create event</button>
         </form>
-        <div class="contract-note">Event creation is not supported by the current API contract. Add a <code>POST /api/events</code> endpoint to enable this form.</div>
       </aside>
     </section>`;
 }
@@ -697,9 +696,39 @@ document.addEventListener("input", (event) => {
 document.addEventListener("submit", (event) => {
   if (event.target.id === "create-event-form") {
     event.preventDefault();
-    showToast("Event creation is not available in the current backend API.");
+    createEvent(event.target);
   }
 });
+
+async function createEvent(form) {
+  if (state.role !== "organizer" || !state.currentUser.id) {
+    showToast("Switch to an organizer profile to create an event.");
+    return;
+  }
+  const formData = new FormData(form);
+  const submitButton = form.querySelector('button[type="submit"]');
+  submitButton.disabled = true;
+  submitButton.textContent = "Publishing…";
+  try {
+    await request("/api/events", {
+      method: "POST",
+      body: JSON.stringify({
+        title: String(formData.get("title") || "").trim(),
+        capacity: Number(formData.get("capacity")),
+        status: formData.get("status"),
+        organizer_id: state.currentUser.id,
+      }),
+    });
+    form.reset();
+    showToast("Event published to Supabase.");
+    await loadEvents();
+  } catch (error) {
+    showToast(`Could not create event: ${error.message}`);
+  } finally {
+    submitButton.disabled = false;
+    submitButton.textContent = "Create event";
+  }
+}
 
 document.querySelector("#role-switch").addEventListener("click", () => {
   openUserSwitcher();
