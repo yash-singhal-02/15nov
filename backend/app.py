@@ -123,6 +123,20 @@ def get_demo_user_id(client: Client):
     return response.data[0]["id"] if response.data else None
 
 
+def get_user(client: Client, user_id: str):
+    response = client.table("users").select("*").eq("id", user_id).limit(1).execute()
+    return response.data[0] if response.data else None
+
+
+def get_organizer(client: Client, user_id: str):
+    user = get_user(client, user_id)
+    if not user:
+        return None
+    if str(user.get("role", "")).lower() not in {"organizer", "organiser"}:
+        return None
+    return user
+
+
 @app.get("/api/me")
 def get_current_user():
     """Return the configured demo user's safe profile fields."""
@@ -211,41 +225,165 @@ def update_user(user_id):
         return jsonify({"success": False, "error": str(error)}), 500
 
 
+@app.post("/api/events")
+def create_event():
+    payload = request.get_json(silent=True) or {}
+    title = payload.get("title")
+    organizer_id = payload.get("organizer_id")
+    try:
+        capacity = int(payload.get("capacity", 0))
+    except (TypeError, ValueError):
+        return jsonify({"success": False, "error": "capacity must be a positive integer."}), 400
+    status = str(payload.get("status", "open")).lower()
+    if not isinstance(title, str) or not title.strip() or not organizer_id or capacity < 1:
+        return jsonify({"success": False, "error": "title, organizer_id, and a positive capacity are required."}), 400
+    if status not in {"open", "upcoming", "closed", "cancelled"}:
+        return jsonify({"success": False, "error": "Unsupported event status."}), 400
+    try:
+        client = get_supabase()
+        if not get_organizer(client, str(organizer_id)):
+            return jsonify({"success": False, "error": "An organizer user is required to create events."}), 403
+        created = client.table("events").insert({
+            "title": title.strip(),
+            "capacity": capacity,
+            "status": status,
+            "organizer_id": organizer_id,
+        }).execute()
+        if not created.data:
+            return jsonify({"success": False, "error": "Supabase did not return the created event."}), 502
+        return jsonify({"success": True, "event": created.data[0]}), 201
+    except RuntimeError as error:
+        return jsonify({"success": False, "error": str(error)}), 503
+    except APIError as error:
+        return jsonify({"success": False, "error": error.message}), 502
+    except Exception:
+        app.logger.exception("Unable to create event")
+        return jsonify({"success": False, "error": "Unable to create event."}), 500
+
+
+@app.patch("/api/events/<event_id>")
+def update_event(event_id):
+    payload = request.get_json(silent=True) or {}
+    organizer_id = payload.get("organizer_id")
+    updates = {}
+    if "title" in payload:
+        if not isinstance(payload["title"], str) or not payload["title"].strip():
+            return jsonify({"success": False, "error": "title cannot be empty."}), 400
+        updates["title"] = payload["title"].strip()
+    if "capacity" in payload:
+        try:
+            updates["capacity"] = int(payload["capacity"])
+        except (TypeError, ValueError):
+            return jsonify({"success": False, "error": "capacity must be a positive integer."}), 400
+        if updates["capacity"] < 1:
+            return jsonify({"success": False, "error": "capacity must be a positive integer."}), 400
+    if "status" in payload:
+        updates["status"] = str(payload["status"]).lower()
+        if updates["status"] not in {"open", "upcoming", "closed", "cancelled"}:
+            return jsonify({"success": False, "error": "Unsupported event status."}), 400
+    if not updates or not organizer_id:
+        return jsonify({"success": False, "error": "organizer_id and at least one event field are required."}), 400
+    try:
+        client = get_supabase()
+        if not get_organizer(client, str(organizer_id)):
+            return jsonify({"success": False, "error": "An organizer user is required to edit events."}), 403
+        events = client.table("events")
+        existing = events.select("*").eq("id", event_id).limit(1).execute()
+        if not existing.data:
+            return jsonify({"success": False, "error": "Event not found."}), 404
+        event = existing.data[0]
+        if str(event.get("organizer_id")) != str(organizer_id):
+            return jsonify({"success": False, "error": "Only the event organizer can edit it."}), 403
+        if "capacity" in updates:
+            count = client.table("registration").select("id", count="exact").eq("event_id", event_id).execute().count or 0
+            if updates["capacity"] < count:
+                return jsonify({"success": False, "error": "Capacity cannot be lower than the number of registrations."}), 409
+        changed = events.update(updates).eq("id", event_id).execute()
+        if not changed.data:
+            return jsonify({"success": False, "error": "Supabase did not return the updated event."}), 502
+        return jsonify({"success": True, "event": changed.data[0]})
+    except RuntimeError as error:
+        return jsonify({"success": False, "error": str(error)}), 503
+    except APIError as error:
+        return jsonify({"success": False, "error": error.message}), 502
+    except Exception:
+        app.logger.exception("Unable to update event %s", event_id)
+        return jsonify({"success": False, "error": "Unable to update event."}), 500
+
+
+@app.delete("/api/events/<event_id>")
+def delete_event(event_id):
+    organizer_id = request.args.get("organizer_id")
+    if not organizer_id:
+        return jsonify({"success": False, "error": "organizer_id is required."}), 400
+    try:
+        client = get_supabase()
+        if not get_organizer(client, organizer_id):
+            return jsonify({"success": False, "error": "An organizer user is required to delete events."}), 403
+        events = client.table("events")
+        existing = events.select("*").eq("id", event_id).limit(1).execute()
+        if not existing.data:
+            return jsonify({"success": False, "error": "Event not found."}), 404
+        if str(existing.data[0].get("organizer_id")) != str(organizer_id):
+            return jsonify({"success": False, "error": "Only the event organizer can delete it."}), 403
+        registrations = client.table("registration").select("id").eq("event_id", event_id).limit(1).execute()
+        if registrations.data:
+            return jsonify({"success": False, "error": "Cancel registrations before deleting this event."}), 409
+        events.delete().eq("id", event_id).execute()
+        return jsonify({"success": True, "message": "Event deleted."})
+    except RuntimeError as error:
+        return jsonify({"success": False, "error": str(error)}), 503
+    except APIError as error:
+        return jsonify({"success": False, "error": error.message}), 502
+    except Exception:
+        app.logger.exception("Unable to delete event %s", event_id)
+        return jsonify({"success": False, "error": "Unable to delete event."}), 500
+
+
+@app.get("/api/events/<event_id>/registrations")
+def get_event_registrations(event_id):
+    organizer_id = request.args.get("organizer_id")
+    try:
+        client = get_supabase()
+        if not organizer_id or not get_organizer(client, organizer_id):
+            return jsonify({"success": False, "error": "An organizer user is required to view the roster."}), 403
+        event = client.table("events").select("id,organizer_id").eq("id", event_id).limit(1).execute()
+        if not event.data:
+            return jsonify({"success": False, "error": "Event not found."}), 404
+        if str(event.data[0].get("organizer_id")) != str(organizer_id):
+            return jsonify({"success": False, "error": "Only the event organizer can view this roster."}), 403
+        rows = client.table("registration").select("*").eq("event_id", event_id).execute().data
+        user_ids = list({row.get("user_id") for row in rows if row.get("user_id")})
+        users = client.table("users").select("*").in_("id", user_ids).execute().data if user_ids else []
+        by_id = {str(user.get("id")): user for user in users}
+        for row in rows:
+            user = by_id.get(str(row.get("user_id")), {})
+            row["user"] = {key: user[key] for key in ("id", "email", "name", "full_name", "username") if user.get(key) is not None}
+        return jsonify({"success": True, "registrations": rows, "count": len(rows)})
+    except RuntimeError as error:
+        return jsonify({"success": False, "error": str(error)}), 503
+    except APIError as error:
+        return jsonify({"success": False, "error": error.message}), 502
+    except Exception:
+        app.logger.exception("Unable to load event roster %s", event_id)
+        return jsonify({"success": False, "error": "Unable to load event roster."}), 500
+
+
 @app.post("/api/registrations")
 def create_registration():
     payload = request.get_json(silent=True) or {}
     event_id = payload.get("event_id")
-    if not event_id:
-        return jsonify({"success": False, "error": "event_id is required."}), 400
+    if not event_id or not payload.get("user_id"):
+        return jsonify({"success": False, "error": "event_id and user_id are required."}), 400
 
     try:
         client = get_supabase()
-        user_id = get_demo_user_id(client)
-        if not user_id:
-            return jsonify({
-                "success": False,
-                "error": "Demo student not found. Set CAMPUSCONNECT_DEMO_USER_EMAIL to an email in the users table.",
-            }), 409
-
-        event_response = client.table("events").select("id,capacity,status").eq("id", event_id).limit(1).execute()
-        if not event_response.data:
-            return jsonify({"success": False, "error": "Event not found."}), 404
-        event = event_response.data[0]
-        if str(event.get("status", "open")).lower() in {"closed", "cancelled", "full"}:
-            return jsonify({"success": False, "error": "This event is closed for registration."}), 409
-
-        registrations = client.table("registration")
-        existing = registrations.select("id").eq("event_id", event_id).eq("user_id", user_id).limit(1).execute()
-        if existing.data:
-            return jsonify({"success": False, "error": "You already have a registration for this event."}), 409
-
-        count = registrations.select("id", count="exact").eq("event_id", event_id).execute().count or 0
-        capacity = event.get("capacity")
-        if capacity is not None and count >= int(capacity):
-            return jsonify({"success": False, "error": "This event is full."}), 409
-
-        created = registrations.insert({"user_id": user_id, "event_id": event_id}).execute()
-        return jsonify({"success": True, "registration": created.data[0] if created.data else None}), 201
+        created = client.rpc("register_for_event", {
+            "p_user_id": payload["user_id"],
+            "p_event_id": event_id,
+        }).execute()
+        result = created.data if isinstance(created.data, dict) else {}
+        return jsonify({"success": True, "registration": result.get("registration")}), 201
     except RuntimeError as error:
         return jsonify({"success": False, "error": str(error)}), 503
     except APIError as error:
@@ -258,15 +396,11 @@ def create_registration():
 
 @app.delete("/api/registrations/<registration_id>")
 def delete_registration(registration_id):
+    user_id = request.args.get("user_id")
+    if not user_id:
+        return jsonify({"success": False, "error": "user_id is required."}), 400
     try:
         client = get_supabase()
-        user_id = get_demo_user_id(client)
-        if not user_id:
-            return jsonify({
-                "success": False,
-                "error": "Demo student not found. Set CAMPUSCONNECT_DEMO_USER_EMAIL to an email in the users table.",
-            }), 409
-
         registrations = client.table("registration")
         existing = (
             registrations.select("id")
@@ -299,7 +433,7 @@ def delete_registration(registration_id):
 def get_my_registrations():
     try:
         client = get_supabase()
-        user_id = get_demo_user_id(client)
+        user_id = request.args.get("user_id") or get_demo_user_id(client)
         if not user_id:
             return jsonify({"success": True, "registrations": []})
         response = (

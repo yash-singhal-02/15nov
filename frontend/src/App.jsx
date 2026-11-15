@@ -1,6 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { createClient } from "@supabase/supabase-js";
 
 const API = import.meta.env.VITE_API_BASE || "";
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
+const SUPABASE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+const supabase = SUPABASE_URL && SUPABASE_KEY ? createClient(SUPABASE_URL, SUPABASE_KEY) : null;
 const POLL_MS = 5000;
 
 async function request(path, options = {}) {
@@ -99,7 +103,7 @@ function App() {
     try {
       const [nextUsers] = await Promise.all([loadUsers(), loadEvents()]);
       const selected = nextUsers.find((user) => String(user.id) === String(selectedId));
-      if (selected) setActiveUser(selected);
+      setActiveUser(selected || null);
       if (selectedId) await loadRegistrations(selectedId);
       setLastSynced(Date.now());
       setError("");
@@ -153,6 +157,20 @@ function App() {
       window.clearInterval(timer);
       window.removeEventListener("focus", onFocus);
     };
+  }, [activeUser?.id, refresh]);
+
+  useEffect(() => {
+    if (!supabase) return undefined;
+    const channel = supabase.channel("campusconnect-live-data");
+    for (const table of ["users", "events", "registration"]) {
+      channel.on("postgres_changes", {
+        event: "*",
+        schema: "public",
+        table,
+      }, () => refresh(activeUser?.id));
+    }
+    channel.subscribe();
+    return () => { supabase.removeChannel(channel); };
   }, [activeUser?.id, refresh]);
 
   useEffect(() => {

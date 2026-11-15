@@ -1,20 +1,25 @@
 # CampusConnect frontend
 
-This is a responsive, framework-free frontend. The Flask backend serves these files and the API from one origin, so no CORS setup or API URL override is needed.
+This is the React frontend. The Flask API runs separately on Render.
 
 ## Run locally
 
-1. Set `SUPABASE_URL` and `SUPABASE_KEY` in `backend/.env` (use a key that can update `public.users`). Set `CAMPUSCONNECT_DEMO_USER_EMAIL` to an email present in the `users` table, or leave it at the default `alex.turner@campus.edu`.
-2. Start Flask from the repository root:
+1. Install dependencies and copy `.env.example` to `.env.local`. For a local Flask API, leave `VITE_API_BASE` blank. To use Render, set it to your Render API URL. Set `VITE_SUPABASE_URL` to your Supabase project URL and `VITE_SUPABASE_PUBLISHABLE_KEY` to the publishable key.
+2. Start the frontend from this directory:
 
-   ```powershell
-   .\backend\venv\Scripts\python.exe backend\app.py
+   ```bash
+   npm install
+   npm run dev
    ```
 
-3. Open <http://127.0.0.1:5000>.
+3. Open the Vite URL printed in the terminal. Do not open `dist/index.html` as a `file://` URL.
 
-`GET /api/health` checks that the API is running. `GET /api/events` and `GET /api/events/{id}` read Supabase event rows; the event list includes organizer details when `organizer_id` matches a row in `users`, plus registration counts from `registration`. `GET /api/me` returns the configured demo user's safe profile fields. `GET /api/users` lists safe user fields, and `PATCH /api/users/{id}` changes a user's email and role. The organizer view has a simple editor for those fields; the configured demo account email stays tied to `CAMPUSCONNECT_DEMO_USER_EMAIL`. The browser refreshes profile, directory, and event data every five seconds while the page is visible. This is polling, not a Supabase Realtime websocket subscription.
+For local development with a local Flask server, leave `VITE_API_BASE` blank; Vite proxies `/api` to `http://127.0.0.1:5000`. For Vercel, set all three `VITE_*` variables in the project settings and redeploy. Set `CORS_ALLOWED_ORIGINS` in Render to the exact frontend origin(s), comma-separated if needed.
 
-Registration endpoints use the `registration` table and the configured demo user: `POST /api/registrations`, `GET /api/me/registrations`, and `DELETE /api/registrations/{registration_id}`. Cancelling deletes only the current demo user's registration row. The current `users` rows expose `id`, `email`, and `role`, but no name field; the UI therefore shows the real configured email until a `name`, `full_name`, or `username` column is added and populated. Event creation/deletion and real sign-in are not implemented. If Supabase credentials are missing, the site displays preview data and labels it as such.
+Apply `backend/migrations/001_atomic_registration.sql` and `backend/migrations/002_enable_realtime.sql` in the Supabase SQL Editor. The second migration enables change notifications for `public.users`, `public.events`, and `public.registration`. Realtime and API reads also require suitable `SELECT` grants and RLS policies for the publishable-key role. Keep RLS enabled and only grant the access your app needs.
 
-The current role switch is a demo UI, not sign-in. Registration is attributed to the single configured demo account. User editing has no authentication or authorization and is intended only for this local app, which binds to `127.0.0.1`; do not expose it beyond localhost. Attendee lists remain unavailable until organizer authentication is added. Before deployment, replace this demo identity lookup with Supabase Auth and enforce authorization with database row-level security.
+`GET /api/health` checks that the API is running. The frontend subscribes to Realtime changes on the three public tables and retains a five-second refresh as a fallback. The API reads the app's `public.users`, `public.events`, and `public.registration` tables. It does not read Supabase Auth's private `auth.users` table.
+
+Registration uses the selected `public.users` row and the `register_for_event` database function. Event create, update, and delete use the API and persist to Supabase. This persona switch is a demo, not authentication; add Supabase Auth and user-scoped RLS policies before using it for a public production app.
+
+The current role switch is a demo UI, not sign-in. The app reads the public `users` profile table; Supabase Auth users in `auth.users` are private and will not appear automatically. The API's organizer checks use rows in `public.users`, not authenticated identity, so add Supabase Auth and user-scoped authorization before allowing public users to write data.
